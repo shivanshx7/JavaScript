@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <script>
+        let arr2 = ["Barman","Wonder woman","Green Lantern","Darkseid"]
+        let ansarr =  arr2.filter((s)=>{
+            if (s.split(" ").length > 1) return true
+            return false
+        })
+        console.log(ansarr)
+
+        let arr5 = [
+            {name : "messi",isGoat: true},
+            {name : "ronaldo",isGoat: false},
+            {name : "busquests",isGoat: true},
+            {name: "kross",isGoat : false},
+            {name : "Neymar",isGoat: true}
+        ]
+        let ans = []
+        let arr1 = arr5.map((x)=>{
+            if (x.isGoat) ans.push(x.name)
+        })
+        console.log(ans)
+    </script>
+</body>
+</html>

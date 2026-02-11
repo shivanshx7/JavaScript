@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body{
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="box"></div>
+    <script>
+        const box = document.querySelector("#box")
+        
+        function sayQuestion(text){
+            box.innerHTML += `<h1>${text}</h1>`
+        }
+        function outcome(text){
+            box.innerHTML += `<h3 style="background-color:yellow;">${text}</h3>`
+        }
+        function answer(text){
+            box.innerHTML += `<h3>${text}</h3>`
+        }
+        function step(text,proceed,outcomex,outcomey,k){
+            
+            setTimeout(() => {
+                let val = prompt("anwer yes/no").trim().toLowerCase()
+                while (val !== "yes" && val !== "no"){
+                val = prompt("anwer yes/no").trim().toLowerCase()
+                }
+                answer(`your answer : ${val}`)
+                if (val === proceed){
+                    outcome(outcomex)
+                    sayQuestion(text)
+                }else{
+                    outcome(outcomey)
+                    return
+                }
+                
+                
+                if (k === 0){
+                    step("Search the bush?","no","tom saw a bush","tom frozed to death",k+1)
+                }else if(k === 1){
+                    step("Found Jerry","yes","tom is happy","tom got tired and gave up",k+1)
+                }else{
+                    return
+                }
+
+
+            },2000)
+            
+            
+        }
+        sayQuestion("Go Towards pool ?")
+        step("Swim into pool?","yes","tom got near pool","tired at last tom gave up",0)
+        
+
+        
+
+        // sayQuestion("Go towards Pool?")
+        // setTimeout(()=>{
+        //    let val =  prompt("anwer yes/no").trim().toLowerCase()
+           
+        //    while (val !== "yes" && val !== "no"){
+        //     val = prompt("anwer yes/no").trim().toLowerCase()
+        //    }
+        //     answer(`your answer : ${val}`)
+        //     if (val === "yes") {
+        //         outcome("you get near pool")
+        //         sayQuestion("swim across pool?")
+        //         setTimeout(()=>{
+        //             let val2 = prompt("answer yes/no 2").trim().toLowerCase()
+        //             while (val2 !== "yes" && val2 !== "no"){
+        //                 val2 = prompt("answer yes/no 2")
+        //             }
+        //             answer(`your answer : ${val2}`)
+        //             if (val2 == "yes"){
+        //                 outcome("died of cold")
+                        
+        //             }else {
+        //                 outcome("started searching behind bush")
+        //                 sayQuestion("Found Jerry")
+                           
+
+
+        //             }
+
+        //         },3000)
+        //     }else{
+        //         outcome("tom didnt find any clue and he gave up")
+        //     }
+        // },3000)
+        
+
+    </script>
+</body>
+</html>

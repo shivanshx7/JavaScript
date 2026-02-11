@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <div id="#box">
+        <h1>Hello</h1>
+        <h1>Second</h1>
+    </div>
+    <script>
+        let items=["Item 1","Item 2"]
+        let val = document.querySelector("#box")
+        val.innerHTML = `
+        <ol>
+            <li>${items[0]}</li>
+            <li>${items[1]}</li>
+        </ol>`
+    </script>
+</body>
+</html>

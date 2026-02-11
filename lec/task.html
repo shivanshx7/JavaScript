@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        #boxv{
+            height : 100px;
+            width: 400px;
+            border: 2px solid black;
+        }
+        #inputbox{
+            border: 2px solid black;
+            padding: 20px;
+        }
+
+    </style>
+</head>
+<body>
+    <div id="boxv">
+        <h1>Hiii</h1>
+    </div>
+    <div class="inputbox">
+        <input id="length" type="number" min="20">
+        <input id="width" type="number" min="20">
+    </div>
+    <script>
+        const inputfield = document.getElementById('length')
+        const inputfield2 = document.getElementById('width')
+        
+
+        const inputHandler = (event) => {
+            const width = inputfield.value;
+            const length = inputfield2.value;
+            const boxElement = document.getElementById('boxv')
+            boxElement.style.height = width + "vw"
+            boxElement.style.width = length + "vh"
+            
+            
+        }
+        inputfield.addEventListener("input",inputHandler)
+        inputfield2.addEventListener("input",inputHandler)
+
+    </script>
+</body>
+</html>

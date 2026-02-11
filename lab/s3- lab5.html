@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <div id="profile-card"></div>
+    <script>
+        let user = {
+            name : "Amit Sharma",
+            age : 22,
+            email : "amit@gmail.com",
+            isStudent : true,
+            laptop: "Mac"
+
+        }
+        const card = document.getElementById("profile-card")
+        let h = document.createElement("h1")
+        h.textContent = `${user.name}'s Profile`
+        card.append(h)
+        for ( _ in user ){
+        let h3 = document.createElement("h3")
+        
+        h3.textContent =  `${_[0].toUpperCase()}${_.slice(1)} : ${user[_]}`
+        card.append(h3)
+
+        }
+
+
+    </script>
+</body>
+</html>

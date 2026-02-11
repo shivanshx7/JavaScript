@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nebula: High-Performance Particle Sandbox</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ffff; font-size: 1.5rem; letter-spacing: 2px; pointer-events: none;
+            transition: opacity 0.5s;
+        }
+        .instruction-overlay {
+            position: absolute; bottom: 30px; left: 30px; color: rgba(255,255,255,0.5);
+            pointer-events: none; user-select: none;
+        }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="loading">INITIALIZING CORE...</div>
+    <div class="instruction-overlay">
+        Left Click: Attract &bull; Right Click: Repulse &bull; Scroll: Zoom
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            count: 40000,           // Particle count
+            size: 0.8,              // Particle size
+            speed: 1.0,             // Physics time scale
+            interactionRadius: 200, // Mouse influence range
+            interactionForce: 2.0,  // Strength of mouse pull/push
+            friction: 0.96,         // Velocity decay (0.0 - 1.0)
+            noiseStrength: 0.05,    // Brownian motion/curl
+            color1: '#00ffff',      // Base color
+            color2: '#ff0055',      // High-energy color
+            bloomStrength: 1.5,
+            bloomRadius: 0.4,
+            preset: 'Nebula'
+        };
+
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.001);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(0, 0, 400);
+
+        const renderer = new THREE.WebGLRenderer({ powerPreference: "high-performance", antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit pixel ratio for performance
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+
+        // --- POST PROCESSING (BLOOM) ---
+        const renderScene = new RenderPass(scene, camera);
+        
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.threshold = 0;
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- PARTICLE SYSTEM ENGINE ---
+        let geometry, material, points;
+        let positions, velocities, originalPositions; // Float32Arrays for CPU physics
+
+        // Generate Texture Programmatically (Glow Dot)
+        function getTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 32, 32);
+            const texture = new THREE.CanvasTexture(canvas);
+            return texture;
+        }
+
+        function initParticles() {
+            if (points) {
+                geometry.dispose();
+                material.dispose();
+                scene.remove(points);
+            }
+
+            geometry = new THREE.BufferGeometry();
+            positions = new Float32Array(CONFIG.count * 3);
+            velocities = new Float32Array(CONFIG.count * 3);
+            originalPositions = new Float32Array(CONFIG.count * 3);
+            const colors = new Float32Array(CONFIG.count * 3);
+
+            const color1 = new THREE.Color(CONFIG.color1);
+            const color2 = new THREE.Color(CONFIG.color2);
+
+            for (let i = 0; i < CONFIG.count; i++) {
+                const i3 = i * 3;
+                
+                // Sphere distribution
+                const r = 150 * Math.cbrt(Math.random());
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                const x = r * Math.sin(phi) * Math.cos(theta);
+                const y = r * Math.sin(phi) * Math.sin(theta);
+                const z = r * Math.cos(phi);
+
+                positions[i3] = x;
+                positions[i3 + 1] = y;
+                positions[i3 + 2] = z;
+
+                originalPositions[i3] = x;
+                originalPositions[i3 + 1] = y;
+                originalPositions[i3 + 2] = z;
+
+                velocities[i3] = (Math.random() - 0.5) * 0.5;
+                velocities[i3 + 1] = (Math.random() - 0.5) * 0.5;
+                velocities[i3 + 2] = (Math.random() - 0.5) * 0.5;
+
+                // Initial Color assignment
+                colors[i3] = color1.r;
+                colors[i3 + 1] = color1.g;
+                colors[i3 + 2] = color1.b;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            material = new THREE.PointsMaterial({
+                size: CONFIG.size,
+                vertexColors: true,
+                map: getTexture(),
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            points = new THREE.Points(geometry, material);
+            scene.add(points);
+            document.getElementById('loading').style.opacity = 0;
+        }
+
+        // --- INTERACTION ---
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2(9999, 9999); // Off-screen default
+        const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0); // Virtual plane for raycasting
+        let isMouseDown = false;
+        let isRightClick = false;
+
+        window.addEventListener('pointermove', (event) => {
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        });
+
+        window.addEventListener('mousedown', (e) => {
+            isMouseDown = true;
+            isRightClick = e.button === 2;
+        });
+        window.addEventListener('mouseup', () => { isMouseDown = false; });
+        window.addEventListener('contextmenu', e => e.preventDefault());
+
+        // --- PHYSICS LOOP ---
+        const dummyVec = new THREE.Vector3();
+        
+        function animatePhysics() {
+            // Get mouse position in 3D space
+            raycaster.setFromCamera(pointer, camera);
+            const targetPoint = new THREE.Vector3();
+            raycaster.ray.intersectPlane(mousePlane, targetPoint);
+            
+            // Adjust plane to face camera approximately
+            mousePlane.normal.copy(camera.position).normalize();
+
+            const pArray = geometry.attributes.position.array;
+            const cArray = geometry.attributes.color.array;
+            
+            const c1 = new THREE.Color(CONFIG.color1);
+            const c2 = new THREE.Color(CONFIG.color2);
+
+            for (let i = 0; i < CONFIG.count; i++) {
+                const i3 = i * 3;
+
+                // Current Position
+                let px = pArray[i3];
+                let py = pArray[i3 + 1];
+                let pz = pArray[i3 + 2];
+
+                // Current Velocity
+                let vx = velocities[i3];
+                let vy = velocities[i3 + 1];
+                let vz = velocities[i3 + 2];
+
+                // 1. Return to Origin Force (Elasticity)
+                // Particles want to drift back to their spawn point (makes shapes stable-ish)
+                const ox = originalPositions[i3];
+                const oy = originalPositions[i3 + 1];
+                const oz = originalPositions[i3 + 2];
+                
+                vx += (ox - px) * 0.001 * CONFIG.speed;
+                vy += (oy - py) * 0.001 * CONFIG.speed;
+                vz += (oz - pz) * 0.001 * CONFIG.speed;
+
+                // 2. Mouse Interaction
+                if (isMouseDown && targetPoint) {
+                    const dx = targetPoint.x - px;
+                    const dy = targetPoint.y - py;
+                    const dz = targetPoint.z - pz;
+                    const distSq = dx*dx + dy*dy + dz*dz;
+
+                    // Optimization: avoid sqrt if possible, only calculate if within rough box
+                    if (distSq < CONFIG.interactionRadius * CONFIG.interactionRadius) {
+                        const dist = Math.sqrt(distSq);
+                        const force = (1 - dist / CONFIG.interactionRadius) * CONFIG.interactionForce * CONFIG.speed;
+                        
+                        if (isRightClick) {
+                            // Repel
+                            vx -= (dx / dist) * force;
+                            vy -= (dy / dist) * force;
+                            vz -= (dz / dist) * force;
+                        } else {
+                            // Attract
+                            vx += (dx / dist) * force;
+                            vy += (dy / dist) * force;
+                            vz += (dz / dist) * force;
+                        }
+                    }
+                }
+
+                // 3. Noise / Curl (Simulated turbulence)
+                const time = Date.now() * 0.0001;
+                vx += Math.sin(py * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+                vy += Math.cos(px * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+                vz += Math.sin(px * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+
+                // Apply Friction
+                vx *= CONFIG.friction;
+                vy *= CONFIG.friction;
+                vz *= CONFIG.friction;
+
+                // Update Position
+                px += vx * CONFIG.speed;
+                py += vy * CONFIG.speed;
+                pz += vz * CONFIG.speed;
+
+                // Update Arrays
+                pArray[i3] = px;
+                pArray[i3 + 1] = py;
+                pArray[i3 + 2] = pz;
+                
+                velocities[i3] = vx;
+                velocities[i3 + 1] = vy;
+                velocities[i3 + 2] = vz;
+
+                // Dynamic Coloring based on Velocity
+                const speed = Math.sqrt(vx*vx + vy*vy + vz*vz);
+                const t = Math.min(speed * 0.5, 1); // Normalize speed 0-1
+                
+                cArray[i3] = c1.r * (1-t) + c2.r * t;
+                cArray[i3+1] = c1.g * (1-t) + c2.g * t;
+                cArray[i3+2] = c1.b * (1-t) + c2.b * t;
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+        }
+
+        // --- GUI ---
+        const gui = new GUI({ title: 'System Controls' });
+        
+        const folderPhys = gui.addFolder('Physics');
+        folderPhys.add(CONFIG, 'count', 1000, 100000, 1000).name('Particle Count').onFinishChange(initParticles);
+        folderPhys.add(CONFIG, 'speed', 0.1, 5.0).name('Time Scale');
+        folderPhys.add(CONFIG, 'friction', 0.80, 0.99).name('Friction');
+        folderPhys.add(CONFIG, 'noiseStrength', 0.0, 0.5).name('Turbulence');
+
+        const folderInter = gui.addFolder('Interaction');
+        folderInter.add(CONFIG, 'interactionRadius', 50, 500).name('Radius');
+        folderInter.add(CONFIG, 'interactionForce', 0.1, 10.0).name('Force');
+        
+        const folderVis = gui.addFolder('Visuals');
+        folderVis.add(CONFIG, 'size', 0.1, 3.0).name('Particle Size').onChange(v => material.size = v);
+        folderVis.add(CONFIG, 'bloomStrength', 0.0, 3.0).name('Glow Strength').onChange(v => bloomPass.strength = v);
+        folderVis.addColor(CONFIG, 'color1').name('Base Color');
+        folderVis.addColor(CONFIG, 'color2').name('Energy Color');
+
+        // Presets
+        const presetFuncs = {
+            'Nebula': () => {
+                CONFIG.friction = 0.96; CONFIG.noiseStrength = 0.05; CONFIG.speed = 1.0; 
+                CONFIG.color1 = '#00ffff'; CONFIG.color2 = '#ff0055';
+            },
+            'Blizzard': () => {
+                CONFIG.friction = 0.99; CONFIG.noiseStrength = 0.2; CONFIG.speed = 1.5;
+                CONFIG.color1 = '#ffffff'; CONFIG.color2 = '#aaccff';
+            },
+            'Void': () => {
+                CONFIG.friction = 0.90; CONFIG.noiseStrength = 0.01; CONFIG.speed = 0.5;
+                CONFIG.color1 = '#111111'; CONFIG.color2 = '#444444';
+            }
+        };
+
+        const folderPresets = gui.addFolder('Presets');
+        Object.keys(presetFuncs).forEach(key => {
+            const obj = { [key]: () => { presetFuncs[key](); initParticles(); gui.controllersRecursive().forEach(c => c.updateDisplay()); }};
+            folderPresets.add(obj, key);
+        });
+
+        // --- MAIN LOOP ---
+        initParticles();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            animatePhysics();
+            composer.render();
+        }
+        
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+
+    </script>
+</body>
+</html>

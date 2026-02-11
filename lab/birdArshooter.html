@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hand Shooter (Black Background)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; }
+        
+        /* HIDDEN VIDEO: Kept in DOM for tracking, but invisible to user */
+        #video-feed {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            object-fit: cover; transform: scaleX(-1);
+            opacity: 0; /* Makes it invisible */
+            z-index: 0;
+        }
+
+        /* GAME CANVAS: Opaque Black */
+        #game-canvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; /* Solid Black Background */
+            z-index: 1; 
+        }
+
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 2; pointer-events: none;
+            display: flex; flex-direction: column; justify-content: space-between; p: 20px;
+        }
+
+        .hud-panel { padding: 20px; color: white; text-shadow: 0 0 5px cyan; pointer-events: auto;}
+        h1 { margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 2px; }
+        .stat { font-size: 18px; margin-top: 5px; }
+        
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: cyan; font-size: 24px; z-index: 10;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+</head>
+<body>
+
+    <video id="video-feed" playsinline></video>
+    <canvas id="game-canvas"></canvas>
+
+    <div id="loading">Initializing Neural Net...</div>
+    <div id="ui-layer">
+        <div class="hud-panel">
+            <h1>Void Hunter</h1>
+            <div class="stat">Score: <span id="score">0</span></div>
+            <div class="stat">Ammo: <span id="ammo">||||||||||</span></div>
+        </div>
+        <div class="hud-panel" style="text-align: center;">
+            <p>Aim with INDEX FINGER. Pinch THUMB + INDEX to Shoot.</p>
+        </div>
+    </div>
+
+<script>
+    const CONFIG = { pinchThreshold: 0.05, ammoReloadRate: 100, maxAmmo: 10 };
+    const state = { score: 0, ammo: 10, birds: [], particles: [], width: window.innerWidth, height: window.innerHeight, isPinching: false, handPosition: {x:0, y:0} };
+
+    const videoElement = document.getElementById('video-feed');
+    const canvasElement = document.getElementById('game-canvas');
+    const scoreEl = document.getElementById('score');
+    const ammoEl = document.getElementById('ammo');
+    const loadingEl = document.getElementById('loading');
+
+    // --- THREE.JS SETUP ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000); // Explicit Black Scene
+    
+    // Add some "Stars" so it doesn't look too flat
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 500;
+    const starPos = new Float32Array(starCount * 3);
+    for(let i=0; i<starCount*3; i++) starPos[i] = (Math.random() - 0.5) * 50;
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({color: 0x888888, size: 0.1});
+    const stars = new THREE.Points(starGeo, starMat);
+    scene.add(stars);
+
+    const camera = new THREE.PerspectiveCamera(75, state.width / state.height, 0.1, 1000);
+    // Remove 'alpha: true' for better performance on solid background
+    const renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
+    renderer.setSize(state.width, state.height);
+    camera.position.z = 5;
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(5, 5, 5);
+    scene.add(dirLight);
+
+    // --- CURSOR & HAND VISUALIZER ---
+    const reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.1, 0.15, 32),
+        new THREE.MeshBasicMaterial({ color: 0x00ffff, side: THREE.DoubleSide })
+    );
+    scene.add(reticle);
+
+    // Simple Line for Hand Skeleton (Index to Thumb connection)
+    const handLineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,0)]);
+    const handLineMat = new THREE.LineBasicMaterial({ color: 0x00ff00 });
+    const handLine = new THREE.Line(handLineGeo, handLineMat);
+    scene.add(handLine);
+
+    // --- SPAWN BIRDS (Adjusted for easier hitting) ---
+    function spawnBird() {
+        // Larger Size
+        const geometry = new THREE.ConeGeometry(0.6, 1.5, 8);
+        const material = new THREE.MeshPhongMaterial({ 
+            color: 0xff0055, 
+            emissive: 0x220000, 
+            flatShading: true 
+        });
+        const bird = new THREE.Mesh(geometry, material);
+
+        // Closer Position (z = -5 to -8)
+        bird.position.x = (Math.random() - 0.5) * 8;
+        bird.position.y = (Math.random() - 0.5) * 5;
+        bird.position.z = -5 - Math.random() * 3; 
+
+        // Slower Speed
+        bird.userData = {
+            velocity: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.02,
+                (Math.random() - 0.5) * 0.02,
+                0.03 + Math.random() * 0.02
+            ),
+            rotationSpeed: Math.random() * 0.05
+        };
+        bird.rotation.x = -Math.PI / 2;
+        scene.add(bird);
+        state.birds.push(bird);
+    }
+
+    // --- MEDIAPIPE ---
+    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.onResults(onResults);
+
+    const cam = new Camera(videoElement, {
+        onFrame: async () => { await hands.send({image: videoElement}); },
+        width: 1280, height: 720
+    });
+    cam.start();
+
+    function onResults(results) {
+        loadingEl.style.display = 'none';
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const indexTip = landmarks[8];
+            const thumbTip = landmarks[4];
+
+            // Map Index Finger (Cursor)
+            const ndcX = (1 - indexTip.x) * 2 - 1; 
+            const ndcY = -(indexTip.y * 2 - 1); 
+            
+            // Map Thumb (For Skeleton Line)
+            const thumbNdcX = (1 - thumbTip.x) * 2 - 1;
+            const thumbNdcY = -(thumbTip.y * 2 - 1);
+
+            // Update Reticle Position
+            const vector = new THREE.Vector3(ndcX, ndcY, 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const pos = camera.position.clone().add(dir.multiplyScalar(4));
+            reticle.position.copy(pos);
+            state.handPosition = { x: ndcX, y: ndcY };
+
+            // Update Hand Line (Visual connection between Index and Thumb)
+            const thumbVector = new THREE.Vector3(thumbNdcX, thumbNdcY, 0.5);
+            thumbVector.unproject(camera);
+            const thumbDir = thumbVector.sub(camera.position).normalize();
+            const thumbPos = camera.position.clone().add(thumbDir.multiplyScalar(4));
+            
+            handLine.geometry.setFromPoints([pos, thumbPos]);
+            handLine.geometry.attributes.position.needsUpdate = true;
+
+            // Pinch Detection
+            const dx = indexTip.x - thumbTip.x;
+            const dy = indexTip.y - thumbTip.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist < CONFIG.pinchThreshold) {
+                if (!state.isPinching && state.ammo > 0) {
+                    shoot();
+                    state.isPinching = true;
+                    reticle.scale.set(0.5, 0.5, 0.5);
+                    reticle.material.color.setHex(0xff0000);
+                }
+            } else {
+                state.isPinching = false;
+                reticle.scale.set(1, 1, 1);
+                reticle.material.color.setHex(0x00ffff);
+            }
+        }
+    }
+
+    function shoot() {
+        state.ammo--;
+        updateUI();
+        const raycaster = new THREE.Raycaster();
+        raycaster.params.Points.threshold = 0.5; // Easier aiming
+        const mouse = new THREE.Vector2(state.handPosition.x, state.handPosition.y);
+        raycaster.setFromCamera(mouse, camera);
+
+        const intersects = raycaster.intersectObjects(state.birds);
+        if (intersects.length > 0) {
+            const hitBird = intersects[0].object;
+            // Particles
+            for(let i=0; i<8; i++) {
+                const p = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.1,0.1), new THREE.MeshBasicMaterial({color: 0xffff00}));
+                p.position.copy(hitBird.position);
+                p.userData = { velocity: new THREE.Vector3((Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3, (Math.random()-0.5)*0.3), life: 1.0 };
+                scene.add(p);
+                state.particles.push(p);
+            }
+            scene.remove(hitBird);
+            state.birds = state.birds.filter(b => b !== hitBird);
+            state.score += 100;
+            updateUI();
+        }
+    }
+
+    function updateUI() {
+        scoreEl.innerText = state.score;
+        let ammoStr = "";
+        for(let i=0; i<state.ammo; i++) ammoStr += "|";
+        ammoEl.innerText = ammoStr;
+    }
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (state.ammo < CONFIG.maxAmmo && ++frameCount % CONFIG.ammoReloadRate === 0) { state.ammo++; updateUI(); }
+        if (frameCount % 60 === 0 && state.birds.length < 5) spawnBird();
+
+        state.birds.forEach((b, i) => {
+            b.position.add(b.userData.velocity);
+            b.rotation.z += b.userData.rotationSpeed;
+            if(b.position.z > 2) { scene.remove(b); state.birds.splice(i, 1); }
+        });
+
+        state.particles.forEach((p, i) => {
+            p.position.add(p.userData.velocity);
+            p.userData.life -= 0.05;
+            p.material.opacity = p.userData.life;
+            if(p.userData.life <= 0) { scene.remove(p); state.particles.splice(i, 1); }
+        });
+        
+        // Rotate stars slowly
+        stars.rotation.z += 0.0005;
+
+        renderer.render(scene, camera);
+    }
+    
+    let frameCount = 0;
+    window.addEventListener('resize', () => {
+        state.width = window.innerWidth; state.height = window.innerHeight;
+        camera.aspect = state.width / state.height; camera.updateProjectionMatrix();
+        renderer.setSize(state.width, state.height);
+    });
+    animate();
+</script>
+</body>
+</html>

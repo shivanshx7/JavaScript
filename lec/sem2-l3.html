@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body{
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="box"></div>
+    <script>
+        const box = document.querySelector("#box")
+        
+        function sayQuestion(text){
+            box.innerHTML += `<h1>${text}</h1>`
+        }
+        function outcome(text){
+            box.innerHTML += `<h3 style="background-color:yellow;">${text}</h3>`
+        }
+        function answer(text){
+            box.innerHTML += `<h3>${text}</h3>`
+        }
+        function step(text,pts,k){
+            
+            setTimeout(() => {
+                let val = prompt("rock paper or scissor").trim().toLowerCase()
+                while ((val !== "rock" && val !== "paper") &&(val !== "paper" && val !== "scissor")){
+                val = prompt("rock paper or scissor").trim().toLowerCase()
+                }
+                let proceed = Math.random()
+                if (proceed < 0.3){
+                    proceed = "rock"
+                }else if(proceed < 0.67){
+                    proceed = "scissor"
+                }else{
+                    proceed = "paper"
+                }
+                let flag = 0 ;
+
+                answer(`you choosed : ${val} | comp chosed : ${proceed}`)
+                if (proceed === "rock"){
+                    if (val === "paper"){
+                        outcome("you won the round")
+                        sayQuestion(text)
+                        flag += 1
+                    }else if(val === "rock"){
+                        outcome("tie")
+                        sayQuestion(text)
+                        flag += 1
+                    }else{
+                        outcome("you lost the round")
+                        sayQuestion(text)
+                        flag += 0
+
+                    }
+                }else if (proceed === "scissor"){
+                    if (val === "rock"){
+                        outcome("you won the round")
+                        sayQuestion(text)
+                        flag += 1
+                    }else if(val === "scissor"){
+                        outcome("tie")
+                        sayQuestion(text)
+                        flag += 1
+                    }else{
+                        outcome("you lost the round")
+                        sayQuestion(text)
+                        flag += 0
+
+                    }
+                }else if (proceed === "paper"){
+                    if (val === "scissor"){
+                        outcome("you won the round")
+                        sayQuestion(text)
+                        flag += 1
+                    }else if(val === "paper"){
+                        outcome("tie")
+                        sayQuestion(text)
+                        flag += 1
+                    }else{
+                        outcome("you lost the round")
+                        sayQuestion(text)
+                        flag += 0
+
+                    }
+                }
+                
+                
+                if (k === 0){
+                    step("Round 3",pts+flag,k+1)
+                }else if(k === 1){
+                    step("GAME OVER",pts+flag,k+1)
+                }else{
+                    if (pts<2){
+                        sayQuestion("GAME LOST")
+                        
+                    }else if(pts === 2){
+                        sayQuestion("GAME TIED")
+                    }else{
+                        sayQuestion("GAME WON")
+                    }
+                    answer(`points scored : ${pts}`)
+                    return
+                }
+
+
+            },2000)
+            
+            
+        }
+        sayQuestion("Round 1")
+        step("Round 2",0,0)
+        
+
+    </script>
+</body>
+</html>

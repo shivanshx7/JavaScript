@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+<body>
+    <p>When a Js file is runed an enviroment will be created named Execution Context. Phase 1 : Memory , Phase 2 : Code Execution</p>
+    <P>Memory : initially all varuable are undefined stored in meomory</P>
+    <p>whenever a function is written it creates its own execution content inside major EC and when function is completely ran through the Ec of function vanishes </p>
+    <P>CLOSURE : A fn which remebers variables of outer fn even when outer fun finsih execution and vanihes</P>
+    <script> 
+    //Closure
+    function outer() {
+        let message = "Hello"
+
+        function inner(){
+            console.log(message)
+        }
+        return inner
+    }
+    let hel = outer()
+    hel()
+
+    function out() {
+        let n = 0
+        function ink(){
+            n += 1
+            return n
+        }
+        return ink
+    }
+    let fn = out()
+    
+    </script>
+</body>
+</html>

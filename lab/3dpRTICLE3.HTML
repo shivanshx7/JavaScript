@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nebula: Hand Tracking Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #050505; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        
+        #loading {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: #00ffff; font-size: 1.5rem; letter-spacing: 2px; pointer-events: none;
+            transition: opacity 0.5s; text-align: center;
+        }
+        
+        /* Small webcam preview in corner so you know it's working */
+        #webcam-preview {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 160px; height: 120px;
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 8px;
+            opacity: 0.7;
+            transform: scaleX(-1); /* Mirror the preview */
+            z-index: 10;
+        }
+
+        .instruction-overlay {
+            position: absolute; bottom: 30px; left: 30px; color: rgba(255,255,255,0.5);
+            pointer-events: none; user-select: none;
+        }
+    </style>
+    
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loading">INITIALIZING AI VISION...<br><span style="font-size:0.8rem; color:#666">Please allow camera access</span></div>
+    <video id="webcam-preview" playsinline autoplay muted></video>
+    <div class="instruction-overlay">
+        Open Hand: Attract &bull; Pinch: Repel
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import GUI from 'three/addons/libs/lil-gui.module.min.js';
+
+        // --- CONFIGURATION ---
+        const CONFIG = {
+            count: 40000,
+            size: 0.8,
+            speed: 1.0,
+            interactionRadius: 250,
+            interactionForce: 2.0,
+            friction: 0.96,
+            noiseStrength: 0.05,
+            color1: '#00ffff',
+            color2: '#ff0055',
+            bloomStrength: 1.5,
+            bloomRadius: 0.4
+        };
+
+        // --- GLOBAL VARIABLES FOR HAND TRACKING ---
+        let detectedHands = []; // Stores { x, y, isPinching }
+        const videoElement = document.getElementById('webcam-preview');
+
+        // --- SCENE SETUP ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050505, 0.001);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(0, 0, 400);
+
+        const renderer = new THREE.WebGLRenderer({ powerPreference: "high-performance", antialias: false });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
+
+        // --- POST PROCESSING ---
+        const renderScene = new RenderPass(scene, camera);
+        const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+        bloomPass.strength = CONFIG.bloomStrength;
+        bloomPass.radius = CONFIG.bloomRadius;
+        bloomPass.threshold = 0;
+
+        const composer = new EffectComposer(renderer);
+        composer.addPass(renderScene);
+        composer.addPass(bloomPass);
+
+        // --- PARTICLE SYSTEM ---
+        let geometry, material, points;
+        let positions, velocities, originalPositions;
+
+        function getTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 32; canvas.height = 32;
+            const ctx = canvas.getContext('2d');
+            const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+            grad.addColorStop(0, 'rgba(255,255,255,1)');
+            grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+            grad.addColorStop(1, 'rgba(0,0,0,0)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 32, 32);
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        function initParticles() {
+            if (points) { geometry.dispose(); material.dispose(); scene.remove(points); }
+
+            geometry = new THREE.BufferGeometry();
+            positions = new Float32Array(CONFIG.count * 3);
+            velocities = new Float32Array(CONFIG.count * 3);
+            originalPositions = new Float32Array(CONFIG.count * 3);
+            const colors = new Float32Array(CONFIG.count * 3);
+            const c1 = new THREE.Color(CONFIG.color1);
+
+            for (let i = 0; i < CONFIG.count; i++) {
+                const i3 = i * 3;
+                const r = 150 * Math.cbrt(Math.random());
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                positions[i3] = r * Math.sin(phi) * Math.cos(theta);
+                positions[i3+1] = r * Math.sin(phi) * Math.sin(theta);
+                positions[i3+2] = r * Math.cos(phi);
+
+                originalPositions[i3] = positions[i3];
+                originalPositions[i3+1] = positions[i3+1];
+                originalPositions[i3+2] = positions[i3+2];
+
+                colors[i3] = c1.r; colors[i3+1] = c1.g; colors[i3+2] = c1.b;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            material = new THREE.PointsMaterial({
+                size: CONFIG.size, vertexColors: true, map: getTexture(),
+                blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.8
+            });
+
+            points = new THREE.Points(geometry, material);
+            scene.add(points);
+        }
+
+        // --- HAND TRACKING MARKERS ---
+        // We add small glowing spheres to show where the system thinks your hands are
+        const handMarkers = [];
+        const markerGeo = new THREE.SphereGeometry(2, 8, 8);
+        const markerMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        
+        for(let i=0; i<2; i++) {
+            const mesh = new THREE.Mesh(markerGeo, markerMat);
+            mesh.visible = false;
+            scene.add(mesh);
+            handMarkers.push(mesh);
+        }
+
+        // --- MEDIAPIPE SETUP ---
+        function onResults(results) {
+            detectedHands = [];
+            
+            // Hide markers initially
+            handMarkers.forEach(m => m.visible = false);
+
+            if (results.multiHandLandmarks) {
+                document.getElementById('loading').style.opacity = 0; // Hide loading text once we track
+
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    if (index >= 2) return; // Limit to 2 hands
+
+                    // 1. Get Index Finger Tip (Landmark 8) for position
+                    const indexTip = landmarks[8];
+                    
+                    // 2. Check for Pinch (Distance between Thumb(4) and Index(8))
+                    const thumbTip = landmarks[4];
+                    const distance = Math.sqrt(
+                        Math.pow(indexTip.x - thumbTip.x, 2) + 
+                        Math.pow(indexTip.y - thumbTip.y, 2)
+                    );
+                    const isPinching = distance < 0.05;
+
+                    // 3. Store normalized coordinates (0-1)
+                    // Note: MediaPipe x is 0(left)-1(right). Three.js is -1 to 1. 
+                    // Also MediaPipe is mirrored video, so we must flip X.
+                    detectedHands.push({
+                        x: 1 - indexTip.x, // Flip X for mirror effect
+                        y: indexTip.y,
+                        isPinching: isPinching,
+                        markerIndex: index
+                    });
+                });
+            }
+        }
+
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 320,
+            height: 240
+        });
+        cameraUtils.start();
+
+
+        // --- PHYSICS LOOP ---
+        const raycaster = new THREE.Raycaster();
+        const mousePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+        const tempVec = new THREE.Vector3();
+
+        function animatePhysics() {
+            // Update hand markers 3D positions
+            const handTargets = [];
+
+            mousePlane.normal.copy(camera.position).normalize();
+
+            // Convert 2D hand coords to 3D world coords
+            detectedHands.forEach(hand => {
+                const ndcX = (hand.x * 2) - 1;
+                const ndcY = -(hand.y * 2) + 1;
+                
+                raycaster.setFromCamera({x: ndcX, y: ndcY}, camera);
+                const target = new THREE.Vector3();
+                raycaster.ray.intersectPlane(mousePlane, target);
+                
+                if(target) {
+                    handTargets.push({ pos: target, repel: hand.isPinching });
+                    
+                    // Update visual marker
+                    const marker = handMarkers[hand.markerIndex];
+                    marker.position.copy(target);
+                    marker.visible = true;
+                }
+            });
+
+            // Physics calculation
+            const pArray = geometry.attributes.position.array;
+            const cArray = geometry.attributes.color.array;
+            const c1 = new THREE.Color(CONFIG.color1);
+            const c2 = new THREE.Color(CONFIG.color2);
+
+            for (let i = 0; i < CONFIG.count; i++) {
+                const i3 = i * 3;
+                let px = pArray[i3], py = pArray[i3+1], pz = pArray[i3+2];
+                let vx = velocities[i3], vy = velocities[i3+1], vz = velocities[i3+2];
+
+                // 1. Elasticity (Return home)
+                vx += (originalPositions[i3] - px) * 0.001 * CONFIG.speed;
+                vy += (originalPositions[i3+1] - py) * 0.001 * CONFIG.speed;
+                vz += (originalPositions[i3+2] - pz) * 0.001 * CONFIG.speed;
+
+                // 2. Hand Interactions
+                for (let h = 0; h < handTargets.length; h++) {
+                    const hand = handTargets[h];
+                    const dx = hand.pos.x - px;
+                    const dy = hand.pos.y - py;
+                    const dz = hand.pos.z - pz;
+                    const distSq = dx*dx + dy*dy + dz*dz;
+
+                    if (distSq < CONFIG.interactionRadius * CONFIG.interactionRadius) {
+                        const dist = Math.sqrt(distSq);
+                        const force = (1 - dist / CONFIG.interactionRadius) * CONFIG.interactionForce * CONFIG.speed;
+                        
+                        if (hand.repel) {
+                            vx -= (dx / dist) * force * 1.5; // Repel stronger
+                            vy -= (dy / dist) * force * 1.5;
+                            vz -= (dz / dist) * force * 1.5;
+                        } else {
+                            vx += (dx / dist) * force;
+                            vy += (dy / dist) * force;
+                            vz += (dz / dist) * force;
+                        }
+                    }
+                }
+
+                // 3. Noise
+                const time = Date.now() * 0.0001;
+                vx += Math.sin(py * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+                vy += Math.cos(px * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+                vz += Math.sin(px * 0.05 + time) * CONFIG.noiseStrength * CONFIG.speed;
+
+                vx *= CONFIG.friction; vy *= CONFIG.friction; vz *= CONFIG.friction;
+                px += vx * CONFIG.speed; py += vy * CONFIG.speed; pz += vz * CONFIG.speed;
+
+                pArray[i3] = px; pArray[i3+1] = py; pArray[i3+2] = pz;
+                velocities[i3] = vx; velocities[i3+1] = vy; velocities[i3+2] = vz;
+
+                // Color
+                const speed = Math.sqrt(vx*vx + vy*vy + vz*vz);
+                const t = Math.min(speed * 0.5, 1);
+                cArray[i3] = c1.r * (1-t) + c2.r * t;
+                cArray[i3+1] = c1.g * (1-t) + c2.g * t;
+                cArray[i3+2] = c1.b * (1-t) + c2.b * t;
+            }
+            
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+        }
+
+        // --- MAIN LOOP ---
+        initParticles();
+        const gui = new GUI({ title: 'Controls' });
+        gui.add(CONFIG, 'bloomStrength', 0, 3).name('Glow');
+        gui.add(CONFIG, 'interactionRadius', 100, 500).name('Hand Radius');
+        gui.addColor(CONFIG, 'color1').name('Color 1');
+        gui.addColor(CONFIG, 'color2').name('Color 2');
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            composer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            animatePhysics();
+            composer.render();
+        }
+        animate();
+
+    </script>
+</body>
+</html>
